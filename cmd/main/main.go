@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 )
 
 func main() {
@@ -29,39 +30,54 @@ type Proxy struct {
 }
 
 func (p *Proxy) handle(w http.ResponseWriter, r *http.Request) {
-	// todo: add timeout
+	// todo: add timeout + `done`
 	log.Printf("method:%v", r.Method)
 	log.Printf("target:%v\n", p.target)
 	log.Printf("path:%v\n", r.URL.Path)
 	log.Printf("query:%v\n", r.URL.RawQuery)
-	var targetUrl string
-	if r.URL.RawQuery == "" {
-		targetUrl = p.target + r.URL.Path
-	} else {
-		targetUrl = p.target + r.URL.Path + "?" + r.URL.RawQuery
+	base, err := url.Parse(p.target)
+	if err != nil {
+		panic(err)
 	}
-	log.Printf("full path:%v\n", targetUrl)
+	reqURL := &url.URL{
+		Path:     r.URL.Path,
+		RawQuery: r.URL.RawQuery,
+	}
 
-	req, _ := http.NewRequestWithContext(r.Context(), r.Method, targetUrl, r.Body)
-	for k, v := range r.Header {
-		req.Header.Add(k, v[0])
+	targetURL := base.ResolveReference(reqURL)
+	log.Printf("full path:%v\n", targetURL)
+
+	req, _ := http.NewRequestWithContext(
+		r.Context(),
+		r.Method,
+		targetURL.String(),
+		r.Body,
+	)
+	req.Header = make(http.Header)
+	for k, vv := range r.Header {
+		for _, v := range vv {
+			req.Header.Add(k, v)
+		}
 	}
 
 	get, err := p.client.Do(req)
 	if err != nil {
 		panic("cannot get: " + err.Error())
 	}
-	defer func(Body io.ReadCloser) {
-		_ = Body.Close()
-	}(get.Body)
 
-	body, err := io.ReadAll(get.Body)
-	if err != nil {
-		panic("cannot read body: " + err.Error())
+	for k, vv := range get.Header {
+		for _, v := range vv {
+			w.Header().Add(k, v)
+		}
 	}
-	_, err = w.Write(body)
+	w.WriteHeader(get.StatusCode)
+	_, err = io.Copy(w, get.Body)
 	if err != nil {
 		panic("cannot write body: " + err.Error())
+	}
+	err = get.Body.Close()
+	if err != nil {
+		return
 	}
 }
 
