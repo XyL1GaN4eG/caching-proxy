@@ -42,9 +42,9 @@ func (p *Proxy) handle(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("full path:%v\n", targetUrl)
 
-	req, _ := http.NewRequest(r.Method, targetUrl, r.Body)
+	req, _ := http.NewRequestWithContext(r.Context(), r.Method, targetUrl, r.Body)
 	for k, v := range r.Header {
-		req.Header.Set(k, v[0])
+		req.Header.Add(k, v[0])
 	}
 
 	get, err := p.client.Do(req)
