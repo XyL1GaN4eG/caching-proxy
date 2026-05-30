@@ -54,22 +54,15 @@ func (p *Proxy) handle(w http.ResponseWriter, r *http.Request) {
 		r.Body,
 	)
 	req.Header = make(http.Header)
-	for k, vv := range r.Header {
-		for _, v := range vv {
-			req.Header.Add(k, v)
-		}
-	}
+	copyHeader(req.Header, r.Header)
 
 	get, err := p.client.Do(req)
 	if err != nil {
 		panic("cannot get: " + err.Error())
 	}
 
-	for k, vv := range get.Header {
-		for _, v := range vv {
-			w.Header().Add(k, v)
-		}
-	}
+	copyHeader(w.Header(), get.Header)
+
 	w.WriteHeader(get.StatusCode)
 	_, err = io.Copy(w, get.Body)
 	if err != nil {
@@ -85,5 +78,13 @@ func newProxy(target string) *Proxy {
 	return &Proxy{
 		target: target,
 		client: http.DefaultClient,
+	}
+}
+
+func copyHeader(dst, src http.Header) {
+	for k, vv := range src {
+		for _, v := range vv {
+			dst.Add(k, v)
+		}
 	}
 }
