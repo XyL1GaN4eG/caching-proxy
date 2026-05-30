@@ -1,7 +1,9 @@
 package proxy
 
 import (
+	"caching-proxy/internal/cache"
 	"io"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
@@ -9,6 +11,7 @@ import (
 
 type Proxy struct {
 	target string
+	cache  *cache.Cache
 	client *http.Client
 }
 
@@ -48,22 +51,32 @@ func (p *Proxy) handle(w http.ResponseWriter, r *http.Request) {
 	req.Header = make(http.Header)
 	copyHeader(req.Header, r.Header)
 
-	get, err := p.client.Do(req)
-	if err != nil {
-		log.Println("cannot make request: " + err.Error())
-		return
-	}
-	defer func(Body io.ReadCloser) {
-		err := Body.Close()
+	val, ok := p.cache.Get(req)
+	var proxyResponse *http.Response
+	if !ok {
+		proxyResponse, err = p.client.Do(req)
 		if err != nil {
-			log.Println("cannot close body: " + err.Error())
+			log.Println("cannot make request: " + err.Error())
+			return
 		}
-	}(get.Body)
+		defer func(Body io.ReadCloser) {
+			err := Body.Close()
+			if err != nil {
+				log.Println("cannot close body: " + err.Error())
+			}
+		}(proxyResponse.Body)
+		body, err := ioutil.ReadAll(proxyResponse.Body) // fixme
+		if err != nil {
+			log.Println("cannot read response body: " + err.Error())
+		}
+		p.cache.Set(req, proxyResponse, body)
+	} else {
+		proxyResponse = val.ToHttpResponse()
+	}
+	copyHeader(w.Header(), proxyResponse.Header)
 
-	copyHeader(w.Header(), get.Header)
-
-	w.WriteHeader(get.StatusCode)
-	_, err = io.Copy(w, get.Body)
+	w.WriteHeader(proxyResponse.StatusCode)
+	_, err = io.Copy(w, proxyResponse.Body)
 	if err != nil {
 		log.Println("cannot write body: " + err.Error())
 		return
@@ -73,6 +86,7 @@ func (p *Proxy) handle(w http.ResponseWriter, r *http.Request) {
 func newProxy(target string) *Proxy {
 	return &Proxy{
 		target: target,
+		cache:  cache.NewCache(),
 		client: http.DefaultClient,
 	}
 }

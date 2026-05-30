@@ -1,6 +1,8 @@
 package cache
 
 import (
+	"bytes"
+	"io/ioutil"
 	"net/http"
 	"sync"
 )
@@ -27,10 +29,6 @@ func NewCache() *Cache {
 	return &Cache{m: make(map[string]CachedResponse)}
 }
 
-func key(r *http.Request) string {
-	return r.Method + "|" + r.URL.Path + "?" + r.URL.RawQuery
-}
-
 func (c *Cache) Get(r *http.Request) (res CachedResponse, ok bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -48,4 +46,16 @@ func (c *Cache) Set(req *http.Request, res *http.Response, body []byte) (cr Cach
 	}
 	c.m[key(req)] = cr
 	return cr
+}
+
+func (c *CachedResponse) ToHttpResponse() *http.Response {
+	return &http.Response{
+		StatusCode: c.code,
+		Header:     c.header,
+		Body:       ioutil.NopCloser(bytes.NewBuffer(c.body)), // fixme
+	}
+}
+
+func key(r *http.Request) string {
+	return r.Method + "|" + r.URL.Path + "?" + r.URL.RawQuery
 }
