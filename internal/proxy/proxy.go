@@ -23,13 +23,13 @@ func NewServer(port string, target *url.URL) http.Server {
 	}
 }
 
-func parseUrl(base *url.URL, r *url.URL) (*url.URL, error) {
+func parseUrl(base *url.URL, r *url.URL) *url.URL {
 	reqURL := &url.URL{
 		Path:     r.Path,
 		RawQuery: r.RawQuery,
 	}
 	target := base.ResolveReference(reqURL)
-	return target, nil
+	return target
 }
 
 func sendError(w http.ResponseWriter, e error) {
@@ -44,70 +44,62 @@ func sendError(w http.ResponseWriter, e error) {
 
 func (p *Proxy) handle(w http.ResponseWriter, r *http.Request) {
 	// todo: add timeout + `done`
-	// log.Printf("method:%v", r.Method)
-	// log.Printf("target:%v\n", p.target)
-	// log.Printf("path:%v\n", r.URL.Path)
-	// log.Printf("query:%v\n", r.URL.RawQuery)
+	targetURL := parseUrl(p.target, r.URL)
 
-	targetURL, err := parseUrl(p.target, r.URL)
-	if err != nil {
-		log.Println("Error parsing URL:", err)
-		sendError(w, err)
-		return
-	}
-
-	req, _ := http.NewRequestWithContext(
+	req, err := http.NewRequestWithContext(
 		r.Context(),
 		r.Method,
 		targetURL.String(),
 		r.Body,
 	)
+	if err != nil {
+		log.Println("Error creating request:", err)
+		sendError(w, err)
+	}
 	req.Header = make(http.Header)
 	copyHeader(req.Header, r.Header)
 
 	val, ok := p.cache.Get(req)
-	var proxyResponse *http.Response
-	var body []byte
 	if !ok {
-		proxyResponse, err = p.client.Do(req)
-		if err != nil {
-			log.Println("cannot make request: " + err.Error())
-			sendError(w, err)
-			return
-		}
-		defer func() {
-			err = proxyResponse.Body.Close()
-			if err != nil {
-				log.Println("cannot close response body: " + err.Error())
-				sendError(w, err)
-				return
-			}
-		}()
-
-		body, err = io.ReadAll(proxyResponse.Body)
-		if err != nil {
-			log.Println("cannot read response body: " + err.Error())
-			sendError(w, err)
-			return
-		}
-
-		p.cache.Set(req, proxyResponse, body)
-	} else {
-		proxyResponse = val.ToHttpResponse()
-		body = val.Body
+		val, err = p.handleCacheMiss(w, req)
 	}
-	copyHeader(w.Header(), proxyResponse.Header)
+	p.sendCacheHit(w, val)
 
-	w.WriteHeader(proxyResponse.StatusCode)
-	_, err = w.Write(body)
+}
+
+func (p *Proxy) sendCacheHit(w http.ResponseWriter, r cache.CachedResponse) {
+	copyHeader(w.Header(), r.Header)
+	w.WriteHeader(r.Code)
+	_, err := w.Write(r.Body)
 	if err != nil {
-		log.Println("cannot write body: " + err.Error())
-		return
+		log.Println("cannot write response body: " + err.Error())
 	}
 }
 
-func newProxy(target *url.URL) *Proxy {
+func (p *Proxy) handleCacheMiss(w http.ResponseWriter, req *http.Request) (cache.CachedResponse, error) {
+	proxyResponse, err := p.client.Do(req)
+	if err != nil {
+		log.Println("cannot make request: " + err.Error())
+		sendError(w, err)
+		return cache.CachedResponse{}, err
+	}
+	defer func() {
+		if err := proxyResponse.Body.Close(); err != nil {
+			log.Println("cannot close response body: " + err.Error())
+		}
+	}()
 
+	body, err := io.ReadAll(proxyResponse.Body)
+	if err != nil {
+		log.Println("cannot read response body: " + err.Error())
+		sendError(w, err)
+		return cache.CachedResponse{}, err
+	}
+
+	return p.cache.Set(req, proxyResponse, body), nil
+}
+
+func newProxy(target *url.URL) *Proxy {
 	return &Proxy{
 		target: target,
 		cache:  cache.NewCache(),
