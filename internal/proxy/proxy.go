@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"caching-proxy/internal/cache"
+	"caching-proxy/internal/util"
 	"io"
 	"log"
 	"net/http"
@@ -23,15 +24,6 @@ func NewServer(port string, target *url.URL) http.Server {
 	}
 }
 
-func parseUrl(base *url.URL, r *url.URL) *url.URL {
-	reqURL := &url.URL{
-		Path:     r.Path,
-		RawQuery: r.RawQuery,
-	}
-	target := base.ResolveReference(reqURL)
-	return target
-}
-
 func sendError(w http.ResponseWriter, e error) {
 	w.WriteHeader(http.StatusBadRequest)
 	_, err := w.Write([]byte(e.Error()))
@@ -44,7 +36,7 @@ func sendError(w http.ResponseWriter, e error) {
 
 func (p *Proxy) handle(w http.ResponseWriter, r *http.Request) {
 	// todo: add timeout + `done`
-	targetURL := parseUrl(p.target, r.URL)
+	targetURL := util.ParseURL(p.target, r.URL)
 
 	req, err := http.NewRequestWithContext(
 		r.Context(),
@@ -57,18 +49,26 @@ func (p *Proxy) handle(w http.ResponseWriter, r *http.Request) {
 		sendError(w, err)
 	}
 	req.Header = make(http.Header)
-	copyHeader(req.Header, r.Header)
 
 	val, ok := p.cache.Get(req)
 	if !ok {
 		val, err = p.handleCacheMiss(w, req)
+		if err != nil {
+			log.Println("Error caching response:", err)
+			return
+		}
+		headers := val.Header.Clone()
+		headers.Set("X-Cache", "MISS")
+		copyHeader(w.Header(), headers)
+	} else {
+		headers := val.Header.Clone()
+		headers.Set("X-Cache", "HIT")
+		copyHeader(w.Header(), headers)
 	}
-	p.sendCacheHit(w, val)
-
+	p.send(w, val)
 }
 
-func (p *Proxy) sendCacheHit(w http.ResponseWriter, r cache.CachedResponse) {
-	copyHeader(w.Header(), r.Header)
+func (p *Proxy) send(w http.ResponseWriter, r cache.CachedResponse) {
 	w.WriteHeader(r.Code)
 	_, err := w.Write(r.Body)
 	if err != nil {
@@ -76,6 +76,7 @@ func (p *Proxy) sendCacheHit(w http.ResponseWriter, r cache.CachedResponse) {
 	}
 }
 
+// fixme: убрать w http.ResponseWriter, чтобы чисто ошибка возвращалась
 func (p *Proxy) handleCacheMiss(w http.ResponseWriter, req *http.Request) (cache.CachedResponse, error) {
 	proxyResponse, err := p.client.Do(req)
 	if err != nil {
@@ -95,8 +96,8 @@ func (p *Proxy) handleCacheMiss(w http.ResponseWriter, req *http.Request) (cache
 		sendError(w, err)
 		return cache.CachedResponse{}, err
 	}
-
-	return p.cache.Set(req, proxyResponse, body), nil
+	resp := p.cache.Set(req, proxyResponse, body)
+	return resp, nil
 }
 
 func newProxy(target *url.URL) *Proxy {
