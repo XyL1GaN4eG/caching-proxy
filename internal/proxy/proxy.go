@@ -23,23 +23,43 @@ func NewServer(port, target string) http.Server {
 	}
 }
 
-func (p *Proxy) handle(w http.ResponseWriter, r *http.Request) {
-	// todo: add timeout + `done`
-	log.Printf("method:%v", r.Method)
-	log.Printf("target:%v\n", p.target)
-	log.Printf("path:%v\n", r.URL.Path)
-	log.Printf("query:%v\n", r.URL.RawQuery)
-	base, err := url.Parse(p.target)
+func parseUrl(p string, r *url.URL) (*url.URL, error) {
+	base, err := url.Parse(p)
 	if err != nil {
-		panic(err)
+		log.Println("Error parsing URL:", err)
+		return nil, err
 	}
 	reqURL := &url.URL{
-		Path:     r.URL.Path,
-		RawQuery: r.URL.RawQuery,
+		Path:     r.Path,
+		RawQuery: r.RawQuery,
 	}
+	target := base.ResolveReference(reqURL)
+	return target, nil
+}
 
-	targetURL := base.ResolveReference(reqURL)
-	log.Printf("full path:%v\n", targetURL)
+func sendError(w http.ResponseWriter, e error) {
+	w.WriteHeader(http.StatusBadRequest)
+	_, err := w.Write([]byte(e.Error()))
+	if err != nil {
+		log.Println("Error writing response:", err)
+		return
+	}
+	return
+}
+
+func (p *Proxy) handle(w http.ResponseWriter, r *http.Request) {
+	// todo: add timeout + `done`
+	// log.Printf("method:%v", r.Method)
+	// log.Printf("target:%v\n", p.target)
+	// log.Printf("path:%v\n", r.URL.Path)
+	// log.Printf("query:%v\n", r.URL.RawQuery)
+
+	targetURL, err := parseUrl(p.target, r.URL)
+	if err != nil {
+		log.Println("Error parsing URL:", err)
+		sendError(w, err)
+		return
+	}
 
 	req, _ := http.NewRequestWithContext(
 		r.Context(),
@@ -57,23 +77,29 @@ func (p *Proxy) handle(w http.ResponseWriter, r *http.Request) {
 		proxyResponse, err = p.client.Do(req)
 		if err != nil {
 			log.Println("cannot make request: " + err.Error())
+			sendError(w, err)
 			return
 		}
-		defer proxyResponse.Body.Close()
+		defer func() {
+			err = proxyResponse.Body.Close()
+			if err != nil {
+				log.Println("cannot close response body: " + err.Error())
+				sendError(w, err)
+				return
+			}
+		}()
 
 		body, err = io.ReadAll(proxyResponse.Body)
 		if err != nil {
 			log.Println("cannot read response body: " + err.Error())
+			sendError(w, err)
+			return
 		}
-		log.Println("BODY: " + string(body))
+
 		p.cache.Set(req, proxyResponse, body)
 	} else {
 		proxyResponse = val.ToHttpResponse()
-		body, err = io.ReadAll(proxyResponse.Body)
-		if err != nil {
-			log.Println("cannot read response body: " + err.Error())
-		}
-		defer proxyResponse.Body.Close()
+		body = val.Body
 	}
 	copyHeader(w.Header(), proxyResponse.Header)
 
