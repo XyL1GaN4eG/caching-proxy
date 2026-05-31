@@ -2,7 +2,8 @@ package cache
 
 import (
 	"bytes"
-	"io/ioutil"
+	"io"
+	"log"
 	"net/http"
 	"sync"
 )
@@ -33,6 +34,7 @@ func (c *Cache) Get(r *http.Request) (res CachedResponse, ok bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	res, ok = c.m[key(r)]
+	log.Println("Gone to cache:", res, ok)
 	return res, ok
 }
 
@@ -52,7 +54,7 @@ func (c *CachedResponse) ToHttpResponse() *http.Response {
 	return &http.Response{
 		StatusCode: c.code,
 		Header:     c.header,
-		Body:       ioutil.NopCloser(bytes.NewBuffer(c.body)), // fixme
+		Body:       io.NopCloser(bytes.NewBuffer(c.body)), // fixme
 	}
 }
 
