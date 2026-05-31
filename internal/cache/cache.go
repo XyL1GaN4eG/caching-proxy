@@ -1,8 +1,6 @@
 package cache
 
 import (
-	"bytes"
-	"io"
 	"log"
 	"net/http"
 	"sync"
@@ -21,9 +19,9 @@ type Cache struct {
 }
 
 type CachedResponse struct {
-	code   int
-	header http.Header
-	body   []byte
+	Code   int
+	Header http.Header
+	Body   []byte
 }
 
 func NewCache() *Cache {
@@ -42,9 +40,9 @@ func (c *Cache) Set(req *http.Request, res *http.Response, body []byte) (cr Cach
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	cr = CachedResponse{
-		code:   res.StatusCode,
-		header: res.Header.Clone(),
-		body:   body,
+		Code:   res.StatusCode,
+		Header: res.Header.Clone(),
+		Body:   body,
 	}
 	c.m[key(req)] = cr
 	return cr
@@ -52,9 +50,8 @@ func (c *Cache) Set(req *http.Request, res *http.Response, body []byte) (cr Cach
 
 func (c *CachedResponse) ToHttpResponse() *http.Response {
 	return &http.Response{
-		StatusCode: c.code,
-		Header:     c.header,
-		Body:       io.NopCloser(bytes.NewBuffer(c.body)), // fixme
+		StatusCode: c.Code,
+		Header:     c.Header,
 	}
 }
 
