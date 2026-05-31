@@ -9,12 +9,12 @@ import (
 )
 
 type Proxy struct {
-	target string
+	target *url.URL
 	cache  *cache.Cache
 	client *http.Client
 }
 
-func NewServer(port, target string) http.Server {
+func NewServer(port string, target *url.URL) http.Server {
 	p := newProxy(target)
 
 	return http.Server{
@@ -23,12 +23,7 @@ func NewServer(port, target string) http.Server {
 	}
 }
 
-func parseUrl(p string, r *url.URL) (*url.URL, error) {
-	base, err := url.Parse(p)
-	if err != nil {
-		log.Println("Error parsing URL:", err)
-		return nil, err
-	}
+func parseUrl(base *url.URL, r *url.URL) (*url.URL, error) {
 	reqURL := &url.URL{
 		Path:     r.Path,
 		RawQuery: r.RawQuery,
@@ -111,7 +106,8 @@ func (p *Proxy) handle(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func newProxy(target string) *Proxy {
+func newProxy(target *url.URL) *Proxy {
+
 	return &Proxy{
 		target: target,
 		cache:  cache.NewCache(),
